@@ -1,0 +1,9 @@
+# Arquivos compilados (Executáveis)
+merkle_sequential
+merkle_parallel
+
+# Arquivos objeto (se gerados durante compilação separada)
+*.o
+
+# Arquivos específicos do macOS
+.DS_Store
