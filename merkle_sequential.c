@@ -5,6 +5,7 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <time.h>
+#include <errno.h>
 
 // --- Configuração de Hash (SHA-256 via EVP) ---
 // SHA-256 produz um hash de 256 bits = 32 bytes.
@@ -12,7 +13,8 @@
 #define HASH_BYTES 32 // 32 bytes = 256 bits
 #define HASH_LEN (HASH_BYTES * 2)      // 64 caracteres hex
 #define HASH_STR_SIZE (HASH_LEN + 1)    // +1 para o caractere nulo '\0'
-
+// Define um tamanho máximo razoável para uma linha/transação no arquivo
+#define MAX_LINE_LEN 1024
 
 /**
  * @brief Imprime os erros da pilha de erros da OpenSSL.
@@ -237,28 +239,94 @@ char* build_merkle_tree_sequential_evp(const char* data_blocks[], int num_blocks
     return merkle_root; // Chamador deve liberar esta string
 }
 
-int main() {
-    // Dados de exemplo
-    const char* transactions[] = {
-        "Alice pays Bob 10 BTC",
-        "Bob pays Carol 5 BTC",
-        "Carol pays David 2 BTC",
-        "David pays Eve 1 BTC",
-        "Eve pays Alice 3 BTC",
-        "Fernando pays Gus 8 BTC",
-        "Gus pays Hebe 1 BTC",
-        "Hebe pays Ivan 4 BTC"
-        // "Ivan pays Joana 7 BTC" // Descomente para testar com ímpar
-    };
-    int num_transactions = sizeof(transactions) / sizeof(transactions[0]);
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Uso: %s <arquivo_de_transacoes>\n", argv[0]);
+        return 1;
+    }
+    const char* filename = argv[1];
+    FILE *infile = NULL;
+    char line_buffer[MAX_LINE_LEN];
+    int num_transactions = 0;
+    char **transactions = NULL;
 
-    printf("Construindo Merkle Tree com SHA-256 (OpenSSL) para %d transações...\n", num_transactions);
+    // --- Passo 1: Contar linhas/transações no arquivo ---
+    infile = fopen(filename, "r");
+    if (infile == NULL) {
+        perror("Erro ao abrir arquivo para contagem");
+        fprintf(stderr, "Arquivo: %s\n", filename);
+        return 1;
+    }
+    while (fgets(line_buffer, sizeof(line_buffer), infile) != NULL) {
+        // Remove possível linha em branco no final
+        if (strlen(line_buffer) > 0 && line_buffer[strlen(line_buffer) - 1] == '\n'){
+             line_buffer[strlen(line_buffer) - 1] = '\0'; // Remove newline
+             if (strlen(line_buffer) > 0) num_transactions++;
+        } else if (strlen(line_buffer) > 0) {
+             num_transactions++;
+        }
+    }
+    if (ferror(infile)) {
+         perror("Erro durante leitura para contagem");
+         fclose(infile);
+         return 1;
+    }
+    rewind(infile); // Volta para o início do arquivo
+
+    if (num_transactions == 0) {
+        fprintf(stderr, "Erro: Nenhuma transação válida encontrada no arquivo '%s'\n", filename);
+        fclose(infile);
+        return 1;
+    }
+    printf("Arquivo '%s' lido. Número de transações detectadas: %d\n", filename, num_transactions);
+
+    // --- Passo 2: Alocar memória para o array de ponteiros ---
+    transactions = (char**)malloc(num_transactions * sizeof(char*));
+    if (transactions == NULL) {
+        perror("Erro ao alocar memória para o array de transações");
+        fclose(infile);
+        return 1;
+    }
+    for (int i = 0; i < num_transactions; ++i) transactions[i] = NULL;
+
+    // --- Passo 3: Ler as transações e alocar memória para cada uma ---
+    int current_line = 0;
+    while (fgets(line_buffer, sizeof(line_buffer), infile) != NULL && current_line < num_transactions) {
+         size_t len = strlen(line_buffer);
+         if (len > 0 && line_buffer[len - 1] == '\n') {
+             line_buffer[len - 1] = '\0';
+             len--;
+         }
+         if (len > 0) {
+             transactions[current_line] = strdup(line_buffer);
+             if (transactions[current_line] == NULL) {
+                 perror("Erro ao alocar memória para string de transação (strdup)");
+                 for (int j = 0; j <= current_line; ++j) free(transactions[j]);
+                 free(transactions);
+                 fclose(infile);
+                 return 1;
+             }
+             current_line++;
+         }
+    }
+    fclose(infile);
+
+    if (current_line != num_transactions) {
+         fprintf(stderr, "Erro: Inconsistência na leitura. Esperava %d, leu %d transações.\n", num_transactions, current_line);
+         for (int j = 0; j < num_transactions; ++j) free(transactions[j]);
+         free(transactions);
+         return 1;
+    }
+
+    // --- Passo 4: Construir a Merkle Tree (Sequencial) ---
+    printf("Construindo Merkle Tree com SHA-256 (OpenSSL EVP) para %d transações do arquivo '%s'...\n", num_transactions, filename);
+    printf("\n--- Execução Sequencial ---\n");
 
     // Medir o tempo
     clock_t start = clock();
 
     // Chama a função sequencial para construir a árvore
-    char* root_hash = build_merkle_tree_sequential_evp(transactions, num_transactions);
+    char* root_hash = build_merkle_tree_sequential_evp((const char**)transactions, num_transactions);
 
     clock_t end = clock();
     double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
@@ -274,8 +342,18 @@ int main() {
         free(root_hash);
     } else {
         printf("Falha ao construir a Merkle Tree.\n");
+        for (int i = 0; i < num_transactions; i++) {
+            free(transactions[i]);
+        }
+        free(transactions);
         return 1;
     }
+
+    // Liberar a memória das transações
+    for (int i = 0; i < num_transactions; i++) {
+        free(transactions[i]);
+    }
+    free(transactions);
 
     return 0;
 }

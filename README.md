@@ -1,122 +1,134 @@
-# Merkle Tree Construction with OpenMP
+# Merkle Tree Validation with OpenMP
 
-Este projeto implementa a construção de uma Merkle Tree em C, utilizando a biblioteca OpenSSL (API EVP) para os cálculos de hash SHA-256. Ele fornece duas versões:
+Este projeto implementa a **validação paralela de múltiplas transações** contra uma Merkle Tree pré-construída em C, utilizando a biblioteca OpenSSL (API EVP) para os cálculos de hash SHA-256 e OpenMP para paralelização.
 
-1.  `merkle_sequential.c`: Uma implementação puramente sequencial.
-2.  `merkle_parallel.c`: Uma implementação paralelizada usando diretivas OpenMP para acelerar o cálculo dos hashes em cada nível da árvore.
+O foco anterior era na construção da árvore, que mostrou ter potencial limitado de paralelização nível a nível. Este projeto agora foca em um cenário mais realista e paralelamente mais eficiente: **validar um grande conjunto de transações independentemente**.
 
-O objetivo é demonstrar e avaliar o ganho de desempenho obtido com a paralelização usando OpenMP em uma tarefa computacionalmente intensiva.
+**Abordagem:**
+
+1.  **Leitura:** Lê as transações de um arquivo de entrada.
+2.  **Construção (Sequencial):** Constrói a Merkle Tree completa na memória, armazenando todos os níveis e hashes. Esta é uma fase de pré-computação sequencial.
+3.  **Geração de Provas (Sequencial):** Para cada transação lida, gera sua respectiva Prova Merkle (audit path) a partir da árvore completa. Esta também é uma fase de pré-computação sequencial.
+4.  **Validação (Paralela):** Valida *cada* transação usando sua prova Merkle contra a raiz conhecida da árvore. **Este loop de validação é paralelizado usando OpenMP**, distribuindo as tarefas de validação entre as threads disponíveis.
+
+**Objetivo:** Avaliar o ganho de desempenho (speedup, eficiência) obtido com a paralelização OpenMP na fase de validação para diferentes números de transações e threads.
+
+## Arquivos Principais
+
+*   `merkle_validation_common.h`: Header com definições de estruturas (`MerkleProof`, `FullMerkleTree`) e declarações de funções.
+*   `merkle_validation_utils.c`: Implementações das funções auxiliares (hash, leitura, free) e das funções de construção da árvore completa e geração de provas.
+*   `merkle_validation_sequential.c`: Implementação da validação sequencial (lê dados, constrói árvore, gera provas, valida em loop sequencial). Usado como **baseline** para medição de speedup.
+*   `merkle_validation_parallel.c`: Implementação da validação paralela (lê dados, constrói árvore, gera provas - tudo sequencialmente; **valida em loop paralelo com OpenMP**).
+
+*(Nota: Os arquivos `merkle_sequential.c` e `merkle_parallel.c` originais, focados na construção, permanecem no repositório como referência, mas não são o foco deste trabalho.)*
 
 ## Pré-requisitos
 
-*   **Compilador C com Suporte a OpenMP:**
-    *   **Linux:** GCC (geralmente incluído em `build-essential` ou `gcc`).
-    *   **macOS:** Recomenda-se **instalar um compilador GCC via Homebrew** (ex: `brew install gcc`), pois o Clang padrão da Apple (identificado como `gcc` ou `cc` por padrão) **não** inclui o runtime OpenMP. Usaremos `gcc-14` como exemplo nos comandos abaixo, mas ajuste para a versão instalada (ex: `gcc-13`, `gcc-12`). **Não use o compilador padrão do sistema no macOS para a versão paralela.**
-*   **Bibliotecas de Desenvolvimento OpenSSL:** Necessário para compilar o código que utiliza as funções de hash.
+*   **Compilador C com Suporte a OpenMP:** GCC ou Clang (com runtime OpenMP instalado, ex: `libomp` ou via GCC no macOS).
+*   **Bibliotecas de Desenvolvimento OpenSSL:** `libssl-dev` (Debian/Ubuntu) ou `openssl-devel` (Fedora/CentOS) ou via Homebrew (`openssl`).
 *   **Bash Shell:** Para executar o script `benchmark.sh`.
+
+## Arquivos de Dados
+
+Utiliza os mesmos arquivos de dados (`data*.txt`) contendo uma transação por linha:
+
+*   `data8.txt`
+*   `data9.txt`
+*   `data800.txt`
+*   `data8000.txt`
+*   `data80000.txt`
 
 ## Instalando Dependências
 
-Você precisa instalar as dependências manualmente:
+(Instruções de instalação permanecem as mesmas - `openssl` e compilador C)
 
 *   **macOS (com Homebrew):**
     ```bash
-    # Instala/Atualiza Homebrew (se necessário)
-    # /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-    # Instala OpenSSL e um compilador GCC com OpenMP (ex: gcc-14)
     brew install openssl gcc
-    # Anote a versão do GCC instalada (ex: 'gcc-14') para usar nos comandos de compilação.
+    # Use gcc-14 ou a versão instalada
     ```
-
 *   **Linux (Debian/Ubuntu):**
     ```bash
-    sudo apt-get update
-    sudo apt-get install build-essential libssl-dev
-    # 'build-essential' geralmente inclui GCC com suporte a OpenMP. Use 'gcc' nos comandos.
+    sudo apt-get update && sudo apt-get install build-essential libssl-dev
     ```
-
 *   **Linux (Fedora/CentOS/RHEL):**
     ```bash
-    sudo dnf update # ou yum update
-    sudo dnf install gcc openssl-devel # ou yum install gcc openssl-devel
-    # Use 'gcc' nos comandos.
+    sudo dnf update && sudo dnf install gcc openssl-devel
     ```
 
 ## Compilando Manualmente
 
-Navegue até o diretório do projeto no terminal e use os seguintes comandos. **Adapte o nome do compilador e os caminhos do OpenSSL conforme seu sistema.**
+Navegue até o diretório do projeto. Adapte o compilador e caminhos do OpenSSL se necessário.
 
-**Compilador:**
-*   Use `gcc` no Linux (se instalado pelos comandos acima).
-*   Use a versão específica do GCC instalada pelo Homebrew no macOS (ex: `gcc-14`, `gcc-13`). **Não use `cc` ou o `gcc` padrão do macOS para a versão paralela.**
+**Exemplo - macOS (Apple Silicon com GCC 14):**
 
-**Caminhos OpenSSL:**
-*   **Linux:** Geralmente não é necessário especificar caminhos (`-I`, `-L`) se `libssl-dev`/`openssl-devel` foi instalado corretamente.
-*   **macOS (Homebrew):** É **essencial** especificar os caminhos. Use `-I/opt/homebrew/opt/openssl/include` e `-L/opt/homebrew/opt/openssl/lib` (para Apple Silicon) ou `-I/usr/local/opt/openssl/include` e `-L/usr/local/opt/openssl/lib` (para Intel Mac).
-
----
-
-**Exemplo de Compilação - macOS (Apple Silicon com GCC 14):**
-
-*   **Sequencial:**
+1.  **Compilar Utils:**
     ```bash
-    gcc-14 -Wall -O2 -I/opt/homebrew/opt/openssl/include merkle_sequential.c -o merkle_sequential -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto -lm
+    gcc-14 -Wall -O2 -c merkle_validation_utils.c -o merkle_validation_utils.o -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto -lm
     ```
-*   **Paralelo (Note a flag -fopenmp):**
+2.  **Compilar Sequencial:**
     ```bash
-    gcc-14 -Wall -O2 -fopenmp -I/opt/homebrew/opt/openssl/include merkle_parallel.c -o merkle_parallel -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto -lm -fopenmp
-    # Note: -fopenmp é necessário tanto para compilação quanto para link com GCC
+    gcc-14 -Wall -O2 merkle_validation_sequential.c merkle_validation_utils.o -o merkle_validation_sequential -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto -lm
+    ```
+3.  **Compilar Paralelo:**
+    ```bash
+    gcc-14 -Wall -O2 -fopenmp merkle_validation_parallel.c merkle_validation_utils.o -o merkle_validation_parallel -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto -lm -fopenmp
     ```
 
----
+**Exemplo - Linux (GCC):**
 
-**Exemplo de Compilação - Linux (Debian/Ubuntu/Fedora com GCC):**
-
-*   **Sequencial:**
+1.  **Compilar Utils:**
     ```bash
-    gcc -Wall -O2 merkle_sequential.c -o merkle_sequential -lssl -lcrypto -lm
+    gcc -Wall -O2 -c merkle_validation_utils.c -o merkle_validation_utils.o -lssl -lcrypto -lm
     ```
-*   **Paralelo (Note a flag -fopenmp):**
+2.  **Compilar Sequencial:**
     ```bash
-    gcc -Wall -O2 -fopenmp merkle_parallel.c -o merkle_parallel -lssl -lcrypto -lm -fopenmp
+    gcc -Wall -O2 merkle_validation_sequential.c merkle_validation_utils.o -o merkle_validation_sequential -lssl -lcrypto -lm
     ```
-
----
-
-*(Use `-Wall -O2` para habilitar warnings úteis e otimizações básicas)*
+3.  **Compilar Paralelo:**
+    ```bash
+    gcc -Wall -O2 -fopenmp merkle_validation_parallel.c merkle_validation_utils.o -o merkle_validation_parallel -lssl -lcrypto -lm -fopenmp
+    ```
 
 ## Executando
 
-*   **Versão Sequencial:**
+Ambos os programas requerem o nome do arquivo de dados como argumento.
+
+*   **Versão Sequencial (Baseline):**
     ```bash
-    ./merkle_sequential
+    ./merkle_validation_sequential data8000.txt
     ```
+    *Anote o "Tempo de execução da validação sequencial" para calcular o speedup.*
+
 *   **Versão Paralela:**
     ```bash
-    # Define o número de threads (ex: 4)
-    export OMP_NUM_THREADS=4
-    ./merkle_parallel
+    # Defina o número de threads (ex: 8)
+    export OMP_NUM_THREADS=8
+    ./merkle_validation_parallel data8000.txt
     ```
-    *(O programa imprimirá o número de threads usado e o tempo de execução)*
+    *Anote o "Tempo de execução da validação paralela".*
 
 ## Benchmark de Desempenho
 
-O script `benchmark.sh` automatiza a execução da versão paralela com diferentes números de threads (de 1 até o número de cores lógicos detectados).
+O script `benchmark.sh` automatiza a execução da versão **paralela** (`merkle_validation_parallel`) contra **todos** os arquivos de dados (`DATA_FILES`), variando o número de threads.
 
-1.  **Compile a versão paralela (`merkle_parallel`) primeiro.**
-2.  **Dê permissão de execução ao script:**
+1.  **Compile a versão paralela (`merkle_validation_parallel`) e as utils (`merkle_validation_utils.o`) primeiro.**
+2.  **Compile a versão sequencial (`merkle_validation_sequential`)** para obter os tempos base.
+3.  **Certifique-se que os arquivos de dados (`data*.txt`) existem.**
+4.  **Execute a versão sequencial UMA VEZ para CADA arquivo de dados** para obter os tempos `T_seq` de referência:
+    ```bash
+    ./merkle_validation_sequential data8.txt
+    ./merkle_validation_sequential data9.txt
+    ./merkle_validation_sequential data800.txt
+    ./merkle_validation_sequential data8000.txt
+    ./merkle_validation_sequential data80000.txt
+    ```
+5.  **Dê permissão de execução ao script de benchmark:**
     ```bash
     chmod +x benchmark.sh
     ```
-3.  **Execute o script:**
+6.  **Execute o script de benchmark (que roda a versão paralela):**
     ```bash
     ./benchmark.sh
     ```
-    O script imprimirá a saída de cada execução, incluindo o tempo. Colete esses tempos para calcular Speedup e Eficiência.
-
-## Observação Importante sobre Desempenho
-
-Com o conjunto de dados de exemplo (8 transações), o overhead do OpenMP (criação e sincronização de threads) provavelmente será **maior** que o tempo de cálculo dos hashes, resultando em *slowdown* (tempo aumenta com mais threads).
-
-Para observar os **benefícios** da paralelização (speedup), **é essencial aumentar significativamente o número de transações** no array `transactions` dentro do `main()` em ambos os arquivos `.c`. Experimente com centenas ou milhares de transações para que o trabalho computacional domine o overhead.
+    A saída mostrará os tempos da **validação paralela** para diferentes contagens de threads e arquivos. Colete esses tempos `T_par(N)`.

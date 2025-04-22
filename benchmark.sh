@@ -1,58 +1,94 @@
 #!/bin/bash
 
 # --- Configuração ---
+# Nome do executável PARALELO C compilado com OpenMP
+EXECUTABLE="./merkle_validation_parallel"
+UTILS_OBJ="merkle_validation_utils.o"   # Arquivo objeto necessário
 
-# Nome do executável C compilado com OpenMP
-EXECUTABLE="./merkle_parallel"
+# Lista de arquivos de dados para testar
+DATA_FILES=("data8.txt" "data9.txt" "data800.txt" "data8000.txt" "data80000.txt")
 
-# Lista de números de threads para testar
-# Modifique esta lista conforme os cores da sua máquina e o que você quer testar.
-# Exemplo: Para ir de 1 a 8 núcleos: THREADS=(1 2 3 4 5 6 7 8)
-# Exemplo: Potências de 2 até 16: THREADS=(1 2 4 8 16)
-# Use 'nproc' (Linux) ou 'sysctl hw.ncpu' (macOS) para ver quantos cores lógicos você tem.
-CPU_CORES=$(sysctl -n hw.ncpu) # Comando para macOS
-# CPU_CORES=$(nproc) # Comando para Linux
-echo "Número de cores lógicos detectados: $CPU_CORES"
-# Cria uma sequência de 1 até o número de cores (ou ajuste como preferir)
-THREADS=($(seq 1 $CPU_CORES))
-# Ou defina manualmente:
-# THREADS=(1 2 4 8)
+# Lista de números de threads para testar (Ex: 1, 2, 4, 8, 16)
+# As threads reais usadas serão limitadas pelo cluster/máquina
+# Use os valores solicitados pelo trabalho: 2, 4, 8, 16
+# Adicionamos 1 para verificar o overhead do OpenMP vs Sequencial (opcional)
+THREADS=(1 2 4 8 16)
+# Ou detecte e use:
+# CPU_CORES=$(sysctl -n hw.ncpu || nproc 2>/dev/null || echo 4)
+# THREADS=($(seq 1 $CPU_CORES)) # Use isto com cuidado, pode exceder 16
 
-# --- Verificação ---
-
-# Verifica se o executável existe e tem permissão de execução
+# --- Verificações Iniciais ---
+# Verifica se o executável existe
 if [ ! -x "$EXECUTABLE" ]; then
-  echo "Erro: Executável '$EXECUTABLE' não encontrado ou sem permissão de execução."
-  echo "Certifique-se que compilou o código C com:"
-  echo "gcc-14 -fopenmp -I/opt/homebrew/opt/openssl/include merkle_parallel.c -o merkle_parallel -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto -lm"
+  echo "ERRO: Executável '$EXECUTABLE' não encontrado ou sem permissão."
+  echo "      Compile a versão paralela e as utils primeiro. Ex (Linux):"
+  echo "      gcc -Wall -O2 -c merkle_validation_utils.c -o $UTILS_OBJ -lssl -lcrypto -lm" # ATUALIZADO
+  echo "      gcc -Wall -O2 -fopenmp merkle_validation_parallel.c $UTILS_OBJ -o $EXECUTABLE -lssl -lcrypto -lm -fopenmp" # ATUALIZADO
   exit 1
 fi
 
-# --- Execução do Benchmark ---
+# Verifica se o arquivo objeto .o existe (necessário para linkar se recompilar aqui)
+if [ ! -f "$UTILS_OBJ" ]; then
+  echo "ERRO: Arquivo objeto '$UTILS_OBJ' não encontrado."
+  echo "      Compile as utils primeiro. Ex (Linux):"
+  echo "      gcc -Wall -O2 -c merkle_validation_utils.c -o $UTILS_OBJ -lssl -lcrypto -lm"
+  # exit 1 # Comente se você garante que o executável já está linkado
+fi
 
+
+# Verifica se os arquivos de dados existem
+missing_data=0
+for datafile in "${DATA_FILES[@]}"; do
+  if [ ! -f "$datafile" ]; then
+    echo "ERRO: Arquivo de dados '$datafile' não encontrado."
+    missing_data=1
+  fi
+done
+if [ $missing_data -eq 1 ]; then
+    echo "      Certifique-se que os arquivos .txt estão no diretório atual."
+    exit 1
+fi
+
+echo "[OK] Executável $EXECUTABLE e arquivos de dados encontrados."
+echo "IMPORTANTE: Certifique-se de ter executado ./merkle_validation_sequential <datafile>"
+echo "            para CADA arquivo de dados para obter os tempos base SEQUENCIAIS."
+echo #
+
+# --- Execução do Benchmark ---
 echo "============================================="
 echo "Iniciando Benchmark para: $EXECUTABLE"
-echo "Testando com threads: ${THREADS[@]}" # Mostra a lista de threads que serão usadas
+echo "Arquivos de Teste: ${DATA_FILES[@]}"
+echo "Threads por Teste: ${THREADS[@]}"
 echo "============================================="
-echo # Linha em branco
 
-# Loop através de cada número de threads na lista
-for T in "${THREADS[@]}"; do
-  echo "*** Executando com $T thread(s) ***"
+# Loop através de cada ARQUIVO de dados
+for datafile in "${DATA_FILES[@]}"; do
+  echo # Linha em branco
+  echo "#############################################"
+  echo "### Testando com Arquivo: $datafile ###"
+  echo "#############################################"
 
-  # Define a variável de ambiente OMP_NUM_THREADS para esta execução específica
-  export OMP_NUM_THREADS=$T
+  # Loop através de cada NÚMERO de threads
+  for T in "${THREADS[@]}"; do
+    echo "*** Executando com $T thread(s) ***"
+    export OMP_NUM_THREADS=$T
 
-  # Executa o programa C. A saída do programa (incluindo a linha de tempo)
-  # será impressa diretamente no terminal.
-  $EXECUTABLE
+    # Executa o programa C PARALELO passando o nome do arquivo
+    # A saída do programa (incluindo a linha de tempo) será impressa.
+    "$EXECUTABLE" "$datafile"
 
-  echo # Adiciona uma linha em branco para separação
-  echo "---------------------------------------------"
-  # sleep 1 # Descomente para adicionar uma pequena pausa entre as execuções, se desejar
-done
+    echo # Linha em branco para separação
+    echo "---------------------------------------------"
+    # sleep 1 # Descomente para pausa entre execuções
+  done # Fim do loop de threads
+
+  echo "### Testes paralelos concluídos para: $datafile ###"
+  echo "#############################################"
+
+done # Fim do loop de arquivos
 
 echo # Linha em branco
 echo "============================================="
-echo "Benchmark Concluído."
+echo "Benchmark (Execuções Paralelas) Concluído."
+echo "Lembre-se de coletar os tempos da execução SEQUENCIAL separadamente."
 echo "============================================="

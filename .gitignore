@@ -1,6 +1,8 @@
 # Arquivos compilados (Executáveis)
 merkle_sequential
 merkle_parallel
+merkle_validation_sequential
+merkle_validation_parallel
 
 # Arquivos objeto (se gerados durante compilação separada)
 *.o
