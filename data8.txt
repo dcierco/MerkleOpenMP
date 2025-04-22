@@ -1,0 +1,8 @@
+Alice pays Bob 10 BTC
+Bob pays Carol 5 BTC
+Carol pays David 2 BTC
+David pays Eve 1 BTC
+Eve pays Alice 3 BTC
+Fernando pays Gus 8 BTC
+Gus pays Hebe 1 BTC
+Hebe pays Ivan 4 BTC

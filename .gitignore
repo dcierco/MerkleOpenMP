@@ -6,6 +6,10 @@ merkle_validation_parallel
 
 # Arquivos objeto (se gerados durante compilação separada)
 *.o
+*.aux
+*.log
+*.out
+*.pdf
 
 # Arquivos específicos do macOS
 .DS_Store
